@@ -79,6 +79,16 @@ int8_t ws_client_connect(void);
 int16_t ws_client_send_binary(uint8_t* buffer, uint16_t payload_len);
 
 /**
+ * @brief Send text frame
+ * @param buffer Buffer containing payload data with WS_MAX_HEADER_LEN bytes reserved at the front
+ * @param payload_len Length of payload data (NOT including header space)
+ * @return Total frame length (header + payload) on success, negative error code on failure
+ * @note Buffer must have WS_MAX_HEADER_LEN bytes of free space before the payload data
+ * @note The function will write the WebSocket frame header and mask the payload in-place
+ */
+int16_t ws_client_send_text(uint8_t* buffer, uint16_t payload_len);
+
+/**
  * @brief Process WebSocket connection and receive data
  * @param buffer Buffer to store received payload (or NULL to just process state)
  * @param len Buffer size
@@ -87,7 +97,7 @@ int16_t ws_client_send_binary(uint8_t* buffer, uint16_t payload_len);
  * @note Call this regularly to process connection state changes and receive frames
  * @note Can be called with buffer=NULL to just update state without receiving data
  */
-int8_t ws_client_process(uint8_t* buffer, uint16_t len, ws_opcode_t* opcode);
+int16_t ws_client_process(uint8_t* buffer, uint16_t len, ws_opcode_t* opcode);
 
 /**
  * @brief Send ping frame

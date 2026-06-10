@@ -19,7 +19,7 @@ static volatile bool g_disconnect_suc_flag = false;
 static uint32_t g_close_time = 0;
 
 // Working buffers
-static uint8_t ws_rx_temp[1024];  // Temporary buffer for receiving frames (Make sure this is large enough for largest packet from server, otherwise it won't receive anything)
+static uint8_t ws_rx_temp[2048];  // Temporary buffer for receiving frames (Make sure this is large enough for largest packet from server, otherwise it won't receive anything)
 static uint8_t ws_tx_temp[64];   // Temporary buffer for ping/pong/close frames
 
 // Helper functions
@@ -29,7 +29,7 @@ static int8_t ws_parse_handshake_response(const char *response);
 static uint16_t ws_create_frame_header(uint8_t *buffer, ws_opcode_t opcode, uint16_t payload_len, bool mask, uint8_t *masking_key);
 static void ws_mask_payload(uint8_t *payload, uint16_t len, const uint8_t *mask);
 static void ws_socket_callback(socket_callback_type_t type, void* data);
-static int8_t ws_process_internal(uint8_t* buffer, uint16_t len, ws_opcode_t* opcode);
+static int16_t ws_process_internal(uint8_t* buffer, uint16_t len, ws_opcode_t* opcode);
 static inline void ws_generate_masking_key(uint8_t *masking_key);
 
 // Base64 encoding table
@@ -216,9 +216,50 @@ int16_t ws_client_send_binary(uint8_t* buffer, uint16_t payload_len) {
 }
 
 /**
+ * @brief Send text frame
+ */
+int16_t ws_client_send_text(uint8_t* buffer, uint16_t payload_len) {
+    if (!g_ws_initialized) {
+        return WS_ERR_NOT_INITIALIZED;
+    }
+
+    if (buffer == NULL) {
+        return WS_ERR_INVALID_PARAM;
+    }
+
+    if (g_ws_state != WS_STATE_CONNECTED) {
+        return WS_ERR_WRONG_STATE;
+    }
+
+    uint8_t masking_key[4];
+    ws_generate_masking_key(masking_key);
+
+    uint16_t header_len = 2;
+    if (payload_len >= 126) {
+        header_len += 2;
+    }
+    header_len += 4;
+
+    if (header_len > WS_MAX_HEADER_LEN) {
+        return WS_ERR_INVALID_PARAM;
+    }
+
+    uint8_t *header_start = buffer - header_len;
+    uint16_t actual_header_len = ws_create_frame_header(header_start, WS_OPCODE_TEXT,
+                                                         payload_len, true, masking_key);
+
+    ws_mask_payload(buffer, payload_len, masking_key);
+
+    uint16_t total_len = actual_header_len + payload_len;
+    int32_t sent = send(g_ws_config.socket_num, header_start, total_len);
+
+    return (sent == SOCK_OK) ? total_len : WS_ERR_SOCKET_FAIL;
+}
+
+/**
  * @brief Process WebSocket connection and receive data
  */
-int8_t ws_client_process(uint8_t* buffer, uint16_t len, ws_opcode_t* opcode) {
+int16_t ws_client_process(uint8_t* buffer, uint16_t len, ws_opcode_t* opcode) {
     if (!g_ws_initialized) {
         return WS_ERR_NOT_INITIALIZED;
     }
@@ -271,8 +312,6 @@ int8_t ws_client_process(uint8_t* buffer, uint16_t len, ws_opcode_t* opcode) {
     if (g_ws_state != WS_STATE_CONNECTED) {
         return WS_ERR_WRONG_STATE;
     }
-    
-    return WS_OK;
 
     // Process incoming data
     return ws_process_internal(buffer, len, opcode);
@@ -281,18 +320,18 @@ int8_t ws_client_process(uint8_t* buffer, uint16_t len, ws_opcode_t* opcode) {
 /**
  * @brief Internal function to process received frames
  */
-static int8_t ws_process_internal(uint8_t* buffer, uint16_t len, ws_opcode_t* opcode) {
+static int16_t ws_process_internal(uint8_t* buffer, uint16_t len, ws_opcode_t* opcode) {
     // Try to receive data
     uint32_t received = recv(g_ws_config.socket_num, ws_rx_temp, sizeof(ws_rx_temp));
     if (received == 0) {
         return WS_OK;  // No data available
     }
-    
+
     // Parse frame header
     if (received < 2) {
         return WS_ERR_INVALID_FRAME;
     }
-    
+
     uint16_t pos = 0;
     
     // First byte: FIN + opcode
